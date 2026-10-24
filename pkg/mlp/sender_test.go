@@ -30,3 +30,23 @@ func TestSenderEnqueue(t *testing.T) {
 		_ = f2
 	}
 }
+
+func TestCellAccounting(t *testing.T) {
+	g := CellGrid{WidthPx: 320, HeightPx: 240, CellSize: 64}
+	a := NewCellAccounting(g)
+	a.MarkPending([]uint32{0, 1, 2})
+	if a.PendingCount() != 3 {
+		t.Fatal("pending")
+	}
+	a.MarkApplied([]uint32{0, 1})
+	if a.PendingCount() != 1 {
+		t.Fatal("applied")
+	}
+	if a.Converged() {
+		t.Fatal("not converged")
+	}
+	a.MarkApplied([]uint32{2})
+	if !a.Converged() {
+		t.Fatal("converged")
+	}
+}

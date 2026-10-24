@@ -102,3 +102,31 @@ var ErrBadLength = &errBadLength{}
 type errBadLength struct{}
 
 func (e *errBadLength) Error() string { return "bad length" }
+
+// CellAccounting tracks per-receiver convergence over a repair-cell grid.
+type CellAccounting struct {
+	Grid     CellGrid
+	Pending  map[uint32]bool
+	Applied  map[uint32]bool
+}
+
+func NewCellAccounting(grid CellGrid) *CellAccounting {
+	return &CellAccounting{Grid: grid, Pending: map[uint32]bool{}, Applied: map[uint32]bool{}}
+}
+
+func (a *CellAccounting) MarkPending(cells []uint32) {
+	for _, c := range cells {
+		a.Pending[c] = true
+		delete(a.Applied, c)
+	}
+}
+
+func (a *CellAccounting) MarkApplied(cells []uint32) {
+	for _, c := range cells {
+		delete(a.Pending, c)
+		a.Applied[c] = true
+	}
+}
+
+func (a *CellAccounting) PendingCount() int { return len(a.Pending) }
+func (a *CellAccounting) Converged() bool    { return len(a.Pending) == 0 }

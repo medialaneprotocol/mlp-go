@@ -350,3 +350,28 @@ func (m *UpdateMeta) CheckAgainst(other *UpdateMeta) error {
 }
 
 var _ = fmt.Sprintf
+
+// FragmentFlags constants (wire).
+const (
+	FlagAnchorBit       = 1 << 0
+	FlagEchoRequestedBit = 1 << 1
+	FlagDuplicateBit    = 1 << 2
+)
+
+// Carrier identifies the transport carrier.
+type Carrier uint8
+
+const (
+	CarrierWs   Carrier = 0
+	CarrierGrpc Carrier = 1
+)
+
+func (c Carrier) FragmentPayloadMax() int {
+	switch c {
+	case CarrierWs:
+		return 1024
+	case CarrierGrpc:
+		return 4096
+	}
+	return 1024
+}

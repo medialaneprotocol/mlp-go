@@ -27,6 +27,7 @@ const (
 	ClassMedia   FragmentClass = 2
 	ClassFeedback FragmentClass = 3
 	ClassPath    FragmentClass = 4
+	ClassDatagram FragmentClass = 5
 )
 
 // Priority.
@@ -67,6 +68,7 @@ var tlv = struct {
 	ReflectsInputSeq uint8
 	SendEpochMs      uint8
 	CellCount        uint8
+	StreamID         uint8
 	Grease           uint8
 	BudgetBytes      uint8
 }{
@@ -78,6 +80,7 @@ var tlv = struct {
 	ReflectsInputSeq: 0x06,
 	SendEpochMs:      0x07,
 	CellCount:        0x08,
+	StreamID:         0x10,
 	Grease:           0x7F,
 	BudgetBytes:      0x09,
 }
@@ -309,6 +312,7 @@ type UpdateMeta struct {
 	UpdateBytes      uint32
 	ChainEpoch       uint32
 	ReflectsInputSeq uint64
+	StreamID         uint32
 	SendEpochMs      uint64
 }
 
@@ -320,6 +324,7 @@ func (m *UpdateMeta) ToExt() *HeaderExt {
 	h.PushU32(tlv.UpdateBytes, m.UpdateBytes)
 	h.PushU32(tlv.ChainEpoch, m.ChainEpoch)
 	h.PushU64(tlv.ReflectsInputSeq, m.ReflectsInputSeq)
+	h.PushU32(tlv.StreamID, m.StreamID)
 	h.PushU64(tlv.SendEpochMs, m.SendEpochMs)
 	return h
 }
@@ -331,6 +336,7 @@ func UpdateMetaFromExt(ext *HeaderExt) *UpdateMeta {
 	ub2, _ := ext.GetU32(tlv.UpdateBytes)
 	ce, _ := ext.GetU32(tlv.ChainEpoch)
 	ris, _ := ext.GetU64(tlv.ReflectsInputSeq)
+	sid, _ := ext.GetU32(tlv.StreamID)
 	sem, _ := ext.GetU64(tlv.SendEpochMs)
 	return &UpdateMeta{
 		UpdateID:         uid,
@@ -340,6 +346,7 @@ func UpdateMetaFromExt(ext *HeaderExt) *UpdateMeta {
 		UpdateBytes:      ub2,
 		ChainEpoch:       ce,
 		ReflectsInputSeq: ris,
+		StreamID:         sid,
 		SendEpochMs:      sem,
 	}
 }

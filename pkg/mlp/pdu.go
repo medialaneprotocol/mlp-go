@@ -28,6 +28,7 @@ const (
 	ClassFeedback FragmentClass = 3
 	ClassPath    FragmentClass = 4
 	ClassDatagram FragmentClass = 5
+	ClassFec      FragmentClass = 6
 )
 
 // Priority.
@@ -69,6 +70,7 @@ var tlv = struct {
 	SendEpochMs      uint8
 	CellCount        uint8
 	StreamID         uint8
+	PathID           uint8
 	Grease           uint8
 	BudgetBytes      uint8
 }{
@@ -81,6 +83,7 @@ var tlv = struct {
 	SendEpochMs:      0x07,
 	CellCount:        0x08,
 	StreamID:         0x10,
+	PathID:           0x13,
 	Grease:           0x7F,
 	BudgetBytes:      0x09,
 }
@@ -107,6 +110,10 @@ func (h *HeaderExt) PushU32(kind uint8, v uint32) {
 	b := make([]byte, 4)
 	binary.LittleEndian.PutUint32(b, v)
 	h.Entries = append(h.Entries, TlvEntry{Kind: kind, Value: b})
+}
+
+func (h *HeaderExt) PushU8(kind uint8, v uint8) {
+	h.Entries = append(h.Entries, TlvEntry{Kind: kind, Value: []byte{v}})
 }
 
 func (h *HeaderExt) PushU16Pair(kind uint8, a, b uint16) {
@@ -139,6 +146,14 @@ func (h *HeaderExt) GetU32(kind uint8) (uint32, bool) {
 		return 0, false
 	}
 	return binary.LittleEndian.Uint32(v), true
+}
+
+func (h *HeaderExt) GetU8(kind uint8) (uint8, bool) {
+	v := h.Get(kind)
+	if v == nil || len(v) != 1 {
+		return 0, false
+	}
+	return v[0], true
 }
 
 func (h *HeaderExt) GetU16Pair(kind uint8) (uint16, uint16, bool) {
@@ -313,6 +328,7 @@ type UpdateMeta struct {
 	ChainEpoch       uint32
 	ReflectsInputSeq uint64
 	StreamID         uint32
+	PathID           uint8
 	SendEpochMs      uint64
 }
 
@@ -325,6 +341,7 @@ func (m *UpdateMeta) ToExt() *HeaderExt {
 	h.PushU32(tlv.ChainEpoch, m.ChainEpoch)
 	h.PushU64(tlv.ReflectsInputSeq, m.ReflectsInputSeq)
 	h.PushU32(tlv.StreamID, m.StreamID)
+	h.PushU8(tlv.PathID, m.PathID)
 	h.PushU64(tlv.SendEpochMs, m.SendEpochMs)
 	return h
 }
@@ -337,6 +354,7 @@ func UpdateMetaFromExt(ext *HeaderExt) *UpdateMeta {
 	ce, _ := ext.GetU32(tlv.ChainEpoch)
 	ris, _ := ext.GetU64(tlv.ReflectsInputSeq)
 	sid, _ := ext.GetU32(tlv.StreamID)
+	pid, _ := ext.GetU8(tlv.PathID)
 	sem, _ := ext.GetU64(tlv.SendEpochMs)
 	return &UpdateMeta{
 		UpdateID:         uid,
@@ -347,6 +365,7 @@ func UpdateMetaFromExt(ext *HeaderExt) *UpdateMeta {
 		ChainEpoch:       ce,
 		ReflectsInputSeq: ris,
 		StreamID:         sid,
+		PathID:           pid,
 		SendEpochMs:      sem,
 	}
 }

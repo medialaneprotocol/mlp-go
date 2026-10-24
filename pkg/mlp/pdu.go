@@ -67,6 +67,7 @@ var tlv = struct {
 	ReflectsInputSeq uint8
 	SendEpochMs      uint8
 	CellCount        uint8
+	Grease           uint8
 	BudgetBytes      uint8
 }{
 	UpdateID:         0x01,
@@ -77,6 +78,7 @@ var tlv = struct {
 	ReflectsInputSeq: 0x06,
 	SendEpochMs:      0x07,
 	CellCount:        0x08,
+	Grease:           0x7F,
 	BudgetBytes:      0x09,
 }
 

@@ -15,9 +15,10 @@ func (g CellGrid) Cells() uint32 {
 
 // UpdateRequest is a sender-side media update.
 type UpdateRequest struct {
-	Payload []byte
-	Cells   []uint32
-	Anchor  bool
+	Payload      []byte
+	Cells        []uint32
+	Anchor       bool
+	EchoCritical bool
 }
 
 // MediaSenderMachine is a minimal Go port of the Rust sender's enqueue path.

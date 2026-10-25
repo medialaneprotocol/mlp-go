@@ -3,10 +3,10 @@ package mlp
 type QosTier int
 
 const (
-	QosBackground QosTier = 0
-	QosBestEffort QosTier = 1
+	QosBackground  QosTier = 0
+	QosBestEffort  QosTier = 1
 	QosInteractive QosTier = 2
-	QosRealtime   QosTier = 3
+	QosRealtime    QosTier = 3
 )
 
 func (q QosTier) MlpPriority() uint8 {

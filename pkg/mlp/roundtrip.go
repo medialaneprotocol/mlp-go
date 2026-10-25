@@ -1,57 +1,53 @@
 package mlp
 
-import "fmt"
-
-// RoundTripResult holds the result of a sender->receiver round trip.
+// RoundTripResult is what one sender-to-receiver round trip proved.
 type RoundTripResult struct {
 	FragmentsSent     int
 	FragmentsReceived int
 	ObjectsAssembled  int
-	CellsPending      int
-	Converged         bool
+	UpdateID          uint64
+	AckHighestApplied uint64
+	PayloadMatch      bool
 }
 
-// RunRoundTrip simulates a full sender->receiver round trip.
+// RunRoundTrip sends one update through the wire and assembles it back.
 func RunRoundTrip(w, h uint32, payload []byte) (*RoundTripResult, error) {
 	grid := CellGrid{WidthPx: w, HeightPx: h, CellSize: 64}
-	sender := NewFullMediaSender(grid)
-	receiver := NewFullMediaReceiver(w, h)
+	sender := NewMediaSenderMachine(grid)
+	receiver := NewMediaReceiverMachine()
 
-	uid, err := sender.EnqueueUpdate(UpdateRequest{Payload: payload, Cells: []uint32{0, 1, 2}})
-	if err != nil {
-		return nil, err
-	}
-	_ = uid
-
-	// Encode fragments
-	frags, err := sender.EnqueueUpdate(UpdateRequest{Payload: payload, Cells: []uint32{0, 1, 2}})
-	_ = frags
-	// Use the basic sender for fragment generation
-	basicSender := NewMediaSenderMachine(grid)
-	basicFrags, err := basicSender.EnqueueUpdate(UpdateRequest{Payload: payload}, 1200)
+	outcome, err := sender.EnqueueUpdate(
+		UpdateRequest{Payload: payload, Cells: []uint32{0, 1, 2}, Anchor: true},
+		CarrierWs, 0)
 	if err != nil {
 		return nil, err
 	}
 
-	result := &RoundTripResult{}
-	result.FragmentsSent = len(basicFrags)
-
-	// Deliver fragments to receiver
-	for _, f := range basicFrags {
-		b, _ := f.Encode()
-		_, _, err := receiver.AcceptFragment(b)
-		if err == nil {
-			result.FragmentsReceived++
+	result := &RoundTripResult{FragmentsSent: outcome.Fragments, UpdateID: outcome.UpdateID}
+	var assembled []byte
+	for {
+		f := sender.PollFragment()
+		if f == nil {
+			break
+		}
+		raw, err := f.Encode()
+		if err != nil {
+			return nil, err
+		}
+		obj, err := receiver.AcceptFragment(raw)
+		if err != nil {
+			return nil, err
+		}
+		result.FragmentsReceived++
+		if obj != nil {
+			assembled = obj.Payload()
+			result.ObjectsAssembled++
+			meta := UpdateMetaFromExt(obj.Ext)
+			receiver.NoteApplied(meta.UpdateID)
 		}
 	}
 
-	result.ObjectsAssembled = receiver.Assembler.OpenCount()
-	result.CellsPending = receiver.Accounting.PendingCount()
-	result.Converged = receiver.Converged()
-
-	fmt.Printf("roundtrip: sent=%d received=%d objects=%d pending=%d converged=%v\n",
-		result.FragmentsSent, result.FragmentsReceived, result.ObjectsAssembled,
-		result.CellsPending, result.Converged)
-
+	result.AckHighestApplied = receiver.Ack.HighestAppliedUpdateId()
+	result.PayloadMatch = string(assembled) == string(payload)
 	return result, nil
 }

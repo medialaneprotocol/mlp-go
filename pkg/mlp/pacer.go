@@ -4,13 +4,13 @@ import "time"
 
 // PacerConfig holds pacer configuration.
 type PacerConfig struct {
-	PaceBps              uint64
-	MaxObjectBytes       uint32
-	ReservedFloorBps     uint64
-	ReservedFraction     float64
-	Window               time.Duration
-	BurstAllowanceRatio  float64
-	MaxGrantBytes        uint64
+	PaceBps             uint64
+	MaxObjectBytes      uint32
+	ReservedFloorBps    uint64
+	ReservedFraction    float64
+	Window              time.Duration
+	BurstAllowanceRatio float64
+	MaxGrantBytes       uint64
 }
 
 func DefaultPacerConfig() PacerConfig {
@@ -114,7 +114,7 @@ func (p *MediaPacer) TryAcquire(class int, bytes uint64, now time.Time) bool {
 	return true
 }
 
-func (p *MediaPacer) PaceBps() uint64 { return p.Config.PaceBps }
+func (p *MediaPacer) PaceBps() uint64       { return p.Config.PaceBps }
 func (p *MediaPacer) MaxGrantBytes() uint64 { return p.Config.MaxGrantBytes }
 
 func min(a, b float64) float64 {

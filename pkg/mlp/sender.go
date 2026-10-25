@@ -1,19 +1,7 @@
 package mlp
 
-// CellGrid describes a media surface geometry.
-type CellGrid struct {
-	WidthPx  uint32
-	HeightPx uint32
-	CellSize uint32
-}
-
-func (g CellGrid) Cells() uint32 {
-	cx := (g.WidthPx + g.CellSize - 1) / g.CellSize
-	cy := (g.HeightPx + g.CellSize - 1) / g.CellSize
-	return cx * cy
-}
-
-// UpdateRequest is a sender-side media update.
+// UpdateRequest is one media update the sender is asked to carry. Cells are
+// the update's covered repair cells; the accounting advances on them.
 type UpdateRequest struct {
 	Payload      []byte
 	Cells        []uint32
@@ -21,30 +9,71 @@ type UpdateRequest struct {
 	EchoCritical bool
 }
 
-// MediaSenderMachine is a minimal Go port of the Rust sender's enqueue path.
-// It produces fragments for one update; pacing/BWE/resume are not yet ported.
+// EnqueueOutcome says what the sender did with an update.
+type EnqueueOutcome struct {
+	UpdateID  uint64
+	Fragments int
+}
+
+// SenderStats counts what left the sender.
+type SenderStats struct {
+	UpdatesEnqueued uint64
+	FragmentsSent   uint64
+	BytesSent       uint64
+}
+
+// MediaSenderMachine is the Go sender's enqueue-and-fragment path: it cuts
+// an update into parts of at most the carrier's fragment payload, stamps
+// every part with the update's metadata, and marks the last part FIN. The
+// pacer, the estimator and the repair plans are the Rust machine's; this
+// one is the byte-level half a Go peer needs to speak first.
 type MediaSenderMachine struct {
 	Grid      CellGrid
-	NextID    uint64
-	Objects   [][]byte // assembled fragment payloads (one per part)
+	Account   *CellAccounting
+	NextObjID uint32
+	NextUpdID uint64
+	Queue     [][]byte // encoded fragments waiting to leave
+	Stats     SenderStats
 }
 
 func NewMediaSenderMachine(grid CellGrid) *MediaSenderMachine {
-	return &MediaSenderMachine{Grid: grid, NextID: 1}
+	return &MediaSenderMachine{
+		Grid:      grid,
+		Account:   NewCellAccounting(grid),
+		NextObjID: 1,
+		NextUpdID: 1,
+	}
 }
 
-// EnqueueUpdate builds fragments for a delta update and returns them.
-func (s *MediaSenderMachine) EnqueueUpdate(req UpdateRequest, mtu int) ([]*Fragment, error) {
-	if mtu <= FragmentFixedHeader {
-		return nil, ErrBadLength
-	}
-	payloadMax := mtu - FragmentFixedHeader - 64 // reserve for ext
+// EnqueueUpdate fragments the update for a carrier and queues the parts.
+// An update larger than the carrier can ever carry is refused, not split
+// past the wire's own cap.
+func (s *MediaSenderMachine) EnqueueUpdate(req UpdateRequest, carrier Carrier, nowMs uint64) (EnqueueOutcome, error) {
+	payloadMax := carrier.FragmentPayloadMax() - 64 // reserve for the metadata extension
 	if payloadMax < 64 {
 		payloadMax = 64
 	}
-	// split payload into one part (simplified: single part)
-	updateID := s.NextID
-	s.NextID++
+	if len(req.Payload) > payloadMax*int(MaxFragmentCount) {
+		return EnqueueOutcome{}, errBadLength
+	}
+
+	updateID := s.NextUpdID
+	s.NextUpdID++
+	objectID := s.NextObjID
+	s.NextObjID++
+	s.Account.MarkPending(req.Cells)
+
+	total := (len(req.Payload) + payloadMax - 1) / payloadMax
+	if total == 0 {
+		total = 1
+	}
+	flags := FlagNone
+	if req.Anchor {
+		flags |= FlagAnchor
+	}
+	if req.EchoCritical {
+		flags |= FlagEchoRequested
+	}
 
 	meta := &UpdateMeta{
 		UpdateID:    updateID,
@@ -53,81 +82,68 @@ func (s *MediaSenderMachine) EnqueueUpdate(req UpdateRequest, mtu int) ([]*Fragm
 		PartCount:   1,
 		UpdateBytes: uint32(len(req.Payload)),
 		ChainEpoch:  1,
-		SendEpochMs: 0,
+		SendEpochMs: nowMs,
 	}
-	ext := meta.ToExt()
 
-	// fragment the payload
-	var frags []*Fragment
-	off := 0
-	idx := uint16(0)
-	total := (len(req.Payload) + payloadMax - 1) / payloadMax
-	if total == 0 {
-		total = 1
-	}
-	for off < len(req.Payload) || (len(req.Payload) == 0 && idx == 0) {
-		chunk := req.Payload[off:]
-		if len(chunk) > payloadMax {
-			chunk = chunk[:payloadMax]
+	for idx := 0; idx < total; idx++ {
+		off := idx * payloadMax
+		end := off + payloadMax
+		if end > len(req.Payload) {
+			end = len(req.Payload)
 		}
+		chunk := req.Payload[off:end]
+		partFlags := flags
+		if idx == total-1 {
+			partFlags |= FlagFin
+		}
+		meta.PartIndex = uint16(idx)
+		meta.PartCount = 1 // one part per fragment: each fragment is a whole part
+		ext := meta.ToExt()
 		f := &Fragment{
 			Header: FragmentHeader{
-				Version:        MediaProtocolVersion,
-				Class:          ClassMedia,
-				Flags:          0,
-				Priority:       PrioMedia,
-				ObjectID:       uint32(updateID),
-				FragmentIndex:  idx,
-				FragmentCount:  uint16(total),
-				PayloadLen:     uint32(len(chunk)),
-				HeaderExtLen:   uint16(ext.EncodedLen()),
+				Version:       MediaProtocolVersion,
+				Class:         ClassMedia,
+				Flags:         partFlags,
+				Priority:      PrioMedia,
+				ObjectID:      objectID,
+				FragmentIndex: uint16(idx),
+				FragmentCount: uint16(total),
+				PayloadLen:    uint32(len(chunk)),
+				HeaderExtLen:  uint16(ext.EncodedLen()),
 			},
 			Ext:     ext,
 			Payload: append([]byte(nil), chunk...),
 		}
-		frags = append(frags, f)
-		off += len(chunk)
-		idx++
-		if len(req.Payload) == 0 {
-			break
+		encoded, err := f.Encode()
+		if err != nil {
+			return EnqueueOutcome{}, err
 		}
+		s.Queue = append(s.Queue, encoded)
+		s.Stats.FragmentsSent++
+		s.Stats.BytesSent += uint64(len(chunk))
 	}
-	if req.Anchor && len(frags) > 0 {
-		frags[0].Header.Flags |= FlagAnchorBit
+	s.Stats.UpdatesEnqueued++
+	return EnqueueOutcome{UpdateID: updateID, Fragments: total}, nil
+}
+
+// PollFragment returns the next queued fragment, or nil when the queue is
+// empty.
+func (s *MediaSenderMachine) PollFragment() *Fragment {
+	if len(s.Queue) == 0 {
+		return nil
 	}
-	return frags, nil
-}
-
-var ErrBadLength = &errBadLength{}
-
-type errBadLength struct{}
-
-func (e *errBadLength) Error() string { return "bad length" }
-
-// CellAccounting tracks per-receiver convergence over a repair-cell grid.
-type CellAccounting struct {
-	Grid     CellGrid
-	Pending  map[uint32]bool
-	Applied  map[uint32]bool
-}
-
-func NewCellAccounting(grid CellGrid) *CellAccounting {
-	return &CellAccounting{Grid: grid, Pending: map[uint32]bool{}, Applied: map[uint32]bool{}}
-}
-
-func (a *CellAccounting) MarkPending(cells []uint32) {
-	for _, c := range cells {
-		a.Pending[c] = true
-		delete(a.Applied, c)
+	raw := s.Queue[0]
+	s.Queue = s.Queue[1:]
+	f, _, err := ParseFragment(raw)
+	if err != nil {
+		return nil
 	}
+	return f
 }
 
-func (a *CellAccounting) MarkApplied(cells []uint32) {
-	for _, c := range cells {
-		delete(a.Pending, c)
-		a.Applied[c] = true
-	}
+// NoteApplied settles the update's cells once the receiver applied it.
+func (s *MediaSenderMachine) NoteApplied(updateID uint64, cells []uint32) {
+	s.Account.MarkApplied(cells)
 }
 
-func (a *CellAccounting) PendingCount() int { return len(a.Pending) }
-func (a *CellAccounting) Converged() bool    { return len(a.Pending) == 0 }
+var errBadLength = assemblyError("bad length")

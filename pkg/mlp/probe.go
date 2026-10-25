@@ -3,18 +3,18 @@ package mlp
 import "time"
 
 type ProbeResult struct {
-	PathID       uint8
-	RTTMs        float64
-	LossRatio    float64
-	GoodputBps   uint64
-	CompletedAt  time.Time
+	PathID      uint8
+	RTTMs       float64
+	LossRatio   float64
+	GoodputBps  uint64
+	CompletedAt time.Time
 }
 
 type PathProber struct {
-	IntervalMs     uint64
-	ProbesPerPath  uint32
-	Results        []ProbeResult
-	LastProbe      *time.Time
+	IntervalMs    uint64
+	ProbesPerPath uint32
+	Results       []ProbeResult
+	LastProbe     *time.Time
 }
 
 func NewPathProber(intervalMs uint64, probesPerPath uint32) *PathProber {

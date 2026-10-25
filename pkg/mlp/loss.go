@@ -1,6 +1,5 @@
 package mlp
 
-
 // LossDetector detects lost packets based on gaps in acks.
 type LossDetector struct {
 	LargestAcked *uint64
@@ -46,4 +45,4 @@ func (ld *LossDetector) detect() {
 }
 
 func (ld *LossDetector) IsLost(pn uint64) bool { return ld.Lost[pn] }
-func (ld *LossDetector) LostCount() int         { return len(ld.Lost) }
+func (ld *LossDetector) LostCount() int        { return len(ld.Lost) }

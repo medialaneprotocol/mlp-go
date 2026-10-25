@@ -1,42 +1,119 @@
 package mlp
 
-// SurfaceCanvas is a minimal receiver-side surface.
-type SurfaceCanvas struct {
-	Cells []uint16
-	Width  uint32
-	Height uint32
+// AckWindowBits is the ack bitmap's width: the ack names the highest
+// applied update and the 63 updates below it.
+const AckWindowBits = 64
+
+// MediaAckWindow is the 64-update window an ack carries. Bit 0 names the
+// highest applied update; bit i names the update i below it. Update id 0 is
+// not an update id: the sender's ids start at 1.
+type MediaAckWindow struct {
+	highest uint64
+	bits    uint64
 }
 
-func NewSurfaceCanvas(w, h uint32) *SurfaceCanvas {
-	return &SurfaceCanvas{Cells: make([]uint16, w*h), Width: w, Height: h}
+// HighestAppliedUpdateId is the newest update the window names.
+func (w *MediaAckWindow) HighestAppliedUpdateId() uint64 { return w.highest }
+
+// Bitmap is the window's 64 bits, exactly.
+func (w *MediaAckWindow) Bitmap() uint64 { return w.bits }
+
+// Reset empties the window.
+func (w *MediaAckWindow) Reset() {
+	w.highest = 0
+	w.bits = 0
 }
 
-// MediaReceiverMachine is a minimal Go port of the receiver's accept path.
+// Has reports whether an update inside the window is marked applied.
+func (w *MediaAckWindow) Has(updateID uint64) bool {
+	if updateID < 1 || updateID > w.highest {
+		return false
+	}
+	distance := w.highest - updateID
+	if distance >= AckWindowBits {
+		return false
+	}
+	return w.bits&(1<<distance) != 0
+}
+
+// Mark declares an update applied. A newer id slides the window; a jump of
+// 64 ids or more leaves the window holding the new update alone.
+func (w *MediaAckWindow) Mark(updateID uint64) {
+	if updateID > w.highest {
+		shift := updateID - w.highest
+		if shift >= AckWindowBits {
+			w.bits = 1
+		} else {
+			w.bits = (w.bits<<shift | 1) & (AckWindowBitsMask())
+		}
+		w.highest = updateID
+		return
+	}
+	distance := w.highest - updateID
+	if distance < AckWindowBits {
+		w.bits |= 1 << distance
+	}
+}
+
+// SeedFromResume seeds the window from a resume ack: the highest applied
+// update is known, nothing below it is.
+func (w *MediaAckWindow) SeedFromResume(highestApplied uint64) {
+	w.Reset()
+	w.highest = highestApplied
+	if w.highest > 0 {
+		w.bits = 1
+	}
+}
+
+func AckWindowBitsMask() uint64 { return ^uint64(0) }
+
+// ReceiverStats counts what the receiver did.
+type ReceiverStats struct {
+	FragmentsAccepted uint64
+	FragmentsRefused  uint64
+	ObjectsAssembled  uint64
+	ObjectsReplayed   uint64
+	UpdatesApplied    uint64
+}
+
+// MediaReceiverMachine is the Go receiver's accept path: parse, dedup,
+// assemble, and hold the ack window over the applied update ids.
 type MediaReceiverMachine struct {
-	Canvas *SurfaceCanvas
-	Seen   map[uint32]bool
+	Assembler *ObjectAssembler
+	Ack       MediaAckWindow
+	Stats     ReceiverStats
 }
 
-func NewMediaReceiverMachine(w, h uint32) *MediaReceiverMachine {
-	return &MediaReceiverMachine{Canvas: NewSurfaceCanvas(w, h), Seen: map[uint32]bool{}}
+func NewMediaReceiverMachine() *MediaReceiverMachine {
+	return &MediaReceiverMachine{Assembler: NewObjectAssembler()}
 }
 
-// AcceptFragment parses and accepts a fragment; returns true if a whole object was assembled.
-func (r *MediaReceiverMachine) AcceptFragment(data []byte) (bool, error) {
+// AcceptFragment takes one encoded fragment. A whole object is returned
+// exactly once, on the fragment that completed it.
+func (r *MediaReceiverMachine) AcceptFragment(data []byte) (*OpenObject, error) {
 	f, n, err := ParseFragment(data)
 	if err != nil {
-		return false, err
+		r.Stats.FragmentsRefused++
+		return nil, err
 	}
 	if n != len(data) {
-		return false, ErrBadLength
+		r.Stats.FragmentsRefused++
+		return nil, errBadLength
 	}
-	// Track seen object ids (simplified: one fragment = one object).
-	r.Seen[f.Header.ObjectID] = true
-	return true, nil
+	r.Stats.FragmentsAccepted++
+	obj, whole, err := r.Assembler.Accept(f)
+	if err != nil {
+		r.Stats.FragmentsRefused++
+		return nil, err
+	}
+	if whole {
+		r.Stats.ObjectsAssembled++
+	}
+	return obj, nil
 }
 
-// NoteApplied records that an update was applied.
-func (r *MediaReceiverMachine) NoteApplied(updateID uint64) {}
-
-// BuildAck produces a minimal ack payload placeholder.
-func (r *MediaReceiverMachine) BuildAck() []byte { return []byte{0} }
+// NoteApplied marks an update applied: it takes its bit in the ack window.
+func (r *MediaReceiverMachine) NoteApplied(updateID uint64) {
+	r.Stats.UpdatesApplied++
+	r.Ack.Mark(updateID)
+}

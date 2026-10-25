@@ -10,11 +10,11 @@ const (
 )
 
 type PathMigration struct {
-	State          MigrationState
-	ActivePath     uint8
-	CandidatePath  uint8
-	Challenge      uint64
-	Failures       uint32
+	State         MigrationState
+	ActivePath    uint8
+	CandidatePath uint8
+	Challenge     uint64
+	Failures      uint32
 }
 
 func NewPathMigration(activePath uint8) *PathMigration {

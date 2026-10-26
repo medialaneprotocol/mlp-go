@@ -135,6 +135,8 @@ var tlv = struct {
 	CellCount        uint8
 	CostMs           uint8
 	StreamID         uint8
+	FecGroupID       uint8
+	FecK             uint8
 	PathID           uint8
 	Grease           uint8
 }{
@@ -154,6 +156,8 @@ var tlv = struct {
 	CellCount:        0x0E,
 	CostMs:           0x0F,
 	StreamID:         0x10,
+	FecGroupID:       0x11,
+	FecK:             0x12,
 	PathID:           0x13,
 	Grease:           0x7F,
 }
@@ -176,7 +180,9 @@ func TlvKindName(kind uint8) (string, bool) {
 		tlv.InputSeq:         "INPUT_SEQ",
 		tlv.CellCount:        "CELL_COUNT",
 		tlv.CostMs:           "COST_MS",
-	}
+		tlv.FecGroupID:       "FEC_GROUP_ID",
+		tlv.FecK:             "FEC_K",
+}
 	n, ok := names[kind]
 	return n, ok
 }
